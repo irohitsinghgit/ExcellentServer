@@ -10,7 +10,6 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon index.js",
     "start": "node index.js",
-    "preinstall": "npm install -g npm@latest",
     "build": "npm install express@4.17.1 && npm install",
     "postinstall": "npm install express@4.17.1 --no-save"
   },
