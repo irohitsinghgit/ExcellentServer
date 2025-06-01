@@ -452,6 +452,335 @@ app.post('/check-security-code', async (req, res) => {
   }
 });
 
+// Create Quiz Question endpoint (Admin only)
+app.post('/admin/create-quiz', verifyToken, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).send({
+        error: 'Access denied',
+        message: 'Only admins can create quiz questions'
+      });
+    }
+
+    const {
+      question,
+      options,
+      correctOption,
+      quizDate,
+      startTime,
+      endTime,
+      marks = 1, // Default marks per question
+      category,
+      difficulty = 'medium', // Default difficulty
+      status = 'draft', // Default status
+      courseId // Course ID (1, 2, 3, or 4)
+    } = req.body;
+
+    // Validate required fields
+    const requiredFields = {
+      question: 'Question text',
+      options: 'Question options',
+      correctOption: 'Correct option',
+      quizDate: 'Quiz date',
+      startTime: 'Start time',
+      endTime: 'End time',
+      courseId: 'Course ID'
+    };
+
+    const missingFields = [];
+    for (const [field, label] of Object.entries(requiredFields)) {
+      if (!req.body[field]) {
+        missingFields.push(label);
+      }
+    }
+
+    if (missingFields.length > 0) {
+      return res.status(400).send({
+        error: 'Missing required fields',
+        missingFields
+      });
+    }
+
+    // Validate course ID
+    const validCourseIds = [1, 2, 3, 4];
+    if (!validCourseIds.includes(Number(courseId))) {
+      return res.status(400).send({
+        error: 'Invalid course ID',
+        message: 'Course ID must be one of: 1, 2, 3, 4'
+      });
+    }
+
+    // Validate options
+    if (!Array.isArray(options) || options.length !== 4) {
+      return res.status(400).send({
+        error: 'Invalid options',
+        message: 'Exactly 4 options (A, B, C, D) are required'
+      });
+    }
+
+    // Validate correct option
+    if (!['A', 'B', 'C', 'D'].includes(correctOption)) {
+      return res.status(400).send({
+        error: 'Invalid correct option',
+        message: 'Correct option must be one of: A, B, C, D'
+      });
+    }
+
+    // Validate date and time format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+
+    if (!dateRegex.test(quizDate)) {
+      return res.status(400).send({
+        error: 'Invalid date format',
+        message: 'Quiz date must be in YYYY-MM-DD format'
+      });
+    }
+
+    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
+      return res.status(400).send({
+        error: 'Invalid time format',
+        message: 'Time must be in HH:MM format (24-hour)'
+      });
+    }
+
+    // Validate that end time is after start time
+    const startDateTime = new Date(`${quizDate}T${startTime}`);
+    const endDateTime = new Date(`${quizDate}T${endTime}`);
+    
+    if (endDateTime <= startDateTime) {
+      return res.status(400).send({
+        error: 'Invalid time range',
+        message: 'End time must be after start time'
+      });
+    }
+
+    // Validate that quiz date is not in the past
+    const currentDate = new Date();
+    currentDate.setHours(0, 0, 0, 0);
+    const quizDateObj = new Date(quizDate);
+    quizDateObj.setHours(0, 0, 0, 0);
+
+    if (quizDateObj < currentDate) {
+      return res.status(400).send({
+        error: 'Invalid quiz date',
+        message: 'Quiz date cannot be in the past'
+      });
+    }
+
+    const db = client.db('excellentInstitute');
+    const quizQuestions = db.collection('quizQuestions');
+
+    // Create the quiz question document
+    const newQuizQuestion = {
+      question,
+      options: {
+        A: options[0],
+        B: options[1],
+        C: options[2],
+        D: options[3]
+      },
+      correctOption,
+      quizDate,
+      startTime,
+      endTime,
+      marks,
+      category,
+      difficulty,
+      status,
+      courseId: Number(courseId), // Store as number (1, 2, 3, or 4)
+      createdBy: req.user.userId,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await quizQuestions.insertOne(newQuizQuestion);
+
+    res.status(201).send({
+      message: 'Quiz question created successfully',
+      quizId: result.insertedId,
+      quiz: {
+        question,
+        options: newQuizQuestion.options,
+        quizDate,
+        startTime,
+        endTime,
+        category,
+        difficulty,
+        status,
+        courseId: Number(courseId)
+      }
+    });
+
+  } catch (err) {
+    console.error('Create quiz question error:', err);
+    res.status(500).send({
+      error: 'Failed to create quiz question',
+      message: 'An error occurred while creating the quiz question'
+    });
+  }
+});
+
+// Get questions for a specific course
+app.get('/quiz/questions/:courseId', verifyToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const courseIdNum = Number(courseId);
+
+    // Validate course ID
+    const validCourseIds = [1, 2, 3, 4];
+    if (!validCourseIds.includes(courseIdNum)) {
+      return res.status(400).send({
+        error: 'Invalid course ID',
+        message: 'Course ID must be one of: 1, 2, 3, 4'
+      });
+    }
+
+    const db = client.db('excellentInstitute');
+    const quizQuestions = db.collection('quizQuestions');
+
+    // Get current date and time
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0];
+    const currentTime = now.toTimeString().slice(0, 5);
+
+    // Find all published questions for the course
+    const questions = await quizQuestions.find({
+      courseId: courseIdNum,
+      status: 'published' // Changed from 'active' to 'published'
+    }).sort({
+      quizDate: 1,  // Sort by date
+      startTime: 1  // Then by start time
+    }).toArray();
+
+    // Format and categorize questions
+    const formattedQuestions = questions.map(q => {
+      const questionDate = new Date(q.quizDate);
+      const startDateTime = new Date(`${q.quizDate}T${q.startTime}`);
+      const endDateTime = new Date(`${q.quizDate}T${q.endTime}`);
+      
+      let status = 'upcoming';
+      if (now >= startDateTime && now <= endDateTime) {
+        status = 'active';
+      } else if (now > endDateTime) {
+        status = 'completed';
+      }
+
+      return {
+        quizId: q._id,
+        question: q.question,
+        options: q.options,
+        quizDate: q.quizDate,
+        startTime: q.startTime,
+        endTime: q.endTime,
+        marks: q.marks,
+        category: q.category,
+        difficulty: q.difficulty,
+        courseId: q.courseId,
+        status: status,
+        timeRemaining: status === 'upcoming' ? 
+          Math.floor((startDateTime - now) / 1000 / 60) : // minutes until start
+          status === 'active' ? 
+          Math.floor((endDateTime - now) / 1000 / 60) : // minutes until end
+          null
+      };
+    });
+
+    // Group questions by status
+    const groupedQuestions = {
+      active: formattedQuestions.filter(q => q.status === 'active'),
+      upcoming: formattedQuestions.filter(q => q.status === 'upcoming'),
+      completed: formattedQuestions.filter(q => q.status === 'completed')
+    };
+
+    res.status(200).send({
+      message: 'Questions retrieved successfully',
+      courseId: courseIdNum,
+      totalQuestions: questions.length,
+      currentDate: currentDate,
+      currentTime: currentTime,
+      questions: groupedQuestions
+    });
+
+  } catch (err) {
+    console.error('Get questions error:', err);
+    res.status(500).send({
+      error: 'Failed to get questions',
+      message: 'An error occurred while retrieving questions'
+    });
+  }
+});
+
+// Debug endpoint to check quiz questions (temporary)
+app.get('/debug/quiz-questions/:courseId', verifyToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const courseIdNum = Number(courseId);
+    const db = client.db('excellentInstitute');
+    const quizQuestions = db.collection('quizQuestions');
+
+    // Get today's date
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const currentTime = today.toTimeString().slice(0, 5);
+
+    // Get all questions for this course without any filters first
+    const allQuestions = await quizQuestions.find({
+      courseId: courseIdNum
+    }).toArray();
+
+    // Get questions with today's date filter
+    const todayQuestions = await quizQuestions.find({
+      courseId: courseIdNum,
+      quizDate: todayStr
+    }).toArray();
+
+    // Get questions with status filter
+    const activeQuestions = await quizQuestions.find({
+      courseId: courseIdNum,
+      quizDate: todayStr,
+      status: 'active'
+    }).toArray();
+
+    // Get the final filtered questions
+    const finalQuestions = await quizQuestions.find({
+      courseId: courseIdNum,
+      quizDate: todayStr,
+      status: 'active',
+      $or: [
+        {
+          startTime: { $lte: currentTime },
+          endTime: { $gt: currentTime }
+        },
+        {
+          startTime: { $gt: currentTime }
+        }
+      ]
+    }).toArray();
+
+    res.status(200).send({
+      debug: {
+        currentDate: todayStr,
+        currentTime: currentTime,
+        courseId: courseIdNum,
+        totalQuestionsInCollection: allQuestions.length,
+        questionsWithTodayDate: todayQuestions.length,
+        questionsWithActiveStatus: activeQuestions.length,
+        finalFilteredQuestions: finalQuestions.length,
+        sampleQuestions: allQuestions.slice(0, 2) // Show first 2 questions for debugging
+      }
+    });
+
+  } catch (err) {
+    console.error('Debug error:', err);
+    res.status(500).send({
+      error: 'Debug failed',
+      message: err.message
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
