@@ -65,7 +65,7 @@ app.post('/register', async (req, res) => {
         name,
         email,
         password,
-        course,
+        batchId,
         role,
         phoneNumber,
         dateOfBirth,
@@ -154,7 +154,7 @@ app.post('/register', async (req, res) => {
         name,
         email,
         password,
-        course,
+        batchId,
         role,
         phoneNumber,
         dateOfBirth,
@@ -179,7 +179,7 @@ app.post('/register', async (req, res) => {
           name,
           email,
           role,
-          course,
+          batchId,
           status
         }
       });
@@ -244,7 +244,7 @@ app.post('/login', async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        course: user.course
+        batchId: user.batchId
       }
     });
 
@@ -287,7 +287,7 @@ app.get('/user/profile', verifyToken, async (req, res) => {
       dateOfBirth: user.dateOfBirth,
       gender: user.gender,
       role: user.role,
-      course: user.course,
+      batchId: user.batchId,
       address: user.address,
       emergencyContact: user.emergencyContact,
       education: user.education,
@@ -398,6 +398,56 @@ app.post('/user/reset-password', verifyToken, async (req, res) => {
     res.status(500).send({
       error: 'Password reset failed',
       message: 'An error occurred while resetting password'
+    });
+  }
+});
+
+// Check security code availability endpoint
+app.post('/check-security-code', async (req, res) => {
+  try {
+    const { securityCode } = req.body;
+
+    // Validate if security code is provided
+    if (!securityCode) {
+      return res.status(400).send({
+        error: 'Missing required field',
+        message: 'Security code is required'
+      });
+    }
+
+    // Validate security code format
+    if (!/^\d{6}$/.test(securityCode)) {
+      return res.status(400).send({
+        error: 'Invalid security code',
+        message: 'Security code must be 6 digits'
+      });
+    }
+
+    const db = client.db('excellentInstitute');
+    const students = db.collection('students');
+
+    // Check if security code exists
+    const existingUser = await students.findOne({ securityCode });
+
+    if (existingUser) {
+      return res.status(400).send({
+        error: 'Security code already exists',
+        message: 'This security code is already in use',
+        available: false
+      });
+    }
+
+    // If we get here, the security code is available
+    res.status(200).send({
+      message: 'Security code is available',
+      available: true
+    });
+
+  } catch (err) {
+    console.error('Security code check error:', err);
+    res.status(500).send({
+      error: 'Failed to check security code',
+      message: 'An error occurred while checking security code availability'
     });
   }
 });
