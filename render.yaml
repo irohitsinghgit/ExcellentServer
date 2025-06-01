@@ -3,7 +3,11 @@ services:
     name: excellent-institute
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: |
+      npm cache clean --force
+      npm install -g npm@latest
+      npm install express@4.17.1 --no-save
+      npm install
     startCommand: node index.js
     healthCheckPath: /
     envVars:
