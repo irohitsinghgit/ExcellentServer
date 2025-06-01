@@ -45,6 +45,11 @@ const verifyToken = (req, res, next) => {
 
 app.use(express.json()); // Parse incoming JSON
 
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
+});
+
 // Test route
 app.get('/', (req, res) => {
   res.send('Server running');
@@ -397,6 +402,34 @@ app.post('/user/reset-password', verifyToken, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : err.message
+  });
+});
+
+// Start server
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running at http://localhost:${PORT}`);
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('Server error:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+    process.exit(1);
+  }
+});
+
+// Handle process termination
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
 });

@@ -2,15 +2,15 @@ services:
   - type: web
     name: excellent-institute
     env: node
-    buildCommand: |
-      npm cache clean --force
-      rm -rf node_modules
-      rm -f package-lock.json
-      npm install --production=false
-      npm rebuild express --build-from-source
+    plan: free
+    buildCommand: npm install
     startCommand: node index.js
+    healthCheckPath: /
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
-        value: 20.11.1 
+        value: 20.11.1
+      - key: PORT
+        value: 10000
+    autoDeploy: true 
