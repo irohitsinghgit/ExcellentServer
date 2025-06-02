@@ -913,26 +913,6 @@ app.post('/quiz/submit', verifyToken, async (req, res) => {
       });
     }
 
-    // Check if quiz is still active
-    const now = new Date();
-    const quizDate = new Date(quiz.quizDate);
-    const startDateTime = new Date(`${quiz.quizDate}T${quiz.startTime}`);
-    const endDateTime = new Date(`${quiz.quizDate}T${quiz.endTime}`);
-
-    if (now < startDateTime) {
-      return res.status(400).send({
-        error: 'Quiz not started',
-        message: 'This quiz has not started yet'
-      });
-    }
-
-    if (now > endDateTime) {
-      return res.status(400).send({
-        error: 'Quiz ended',
-        message: 'This quiz has already ended'
-      });
-    }
-
     // Check if user has already attempted this quiz
     const existingAttempt = await quizAttempts.findOne({
       quizId: new ObjectId(quizId),
