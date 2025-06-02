@@ -479,11 +479,12 @@ app.post('/admin/create-quiz', verifyToken, async (req, res) => {
       passingMarks = 40
     } = req.body;
 
-    // Validate batchId
-    if (!batchId) {
+    // Validate batchId and convert to number
+    const batchIdNum = Number(batchId);
+    if (isNaN(batchIdNum) || !Number.isInteger(batchIdNum) || batchIdNum <= 0) {
       return res.status(400).send({
-        error: 'Missing batch ID',
-        message: 'Batch ID is required'
+        error: 'Invalid batch ID',
+        message: 'Batch ID must be a positive number (e.g., 1, 2, 3)'
       });
     }
 
@@ -675,7 +676,7 @@ app.post('/admin/create-quiz', verifyToken, async (req, res) => {
     // Create the quiz document
     const quiz = {
       _id: quizId,
-      batchId,
+      batchId: batchIdNum,
       quizTitle: quizTitle.trim(),
       quizDescription: quizDescription.trim(),
       quizDate,
@@ -706,7 +707,7 @@ app.post('/admin/create-quiz', verifyToken, async (req, res) => {
         message: 'Quiz created successfully',
         quiz: {
           id: quizId.toString(),
-          batchId,
+          batchId: batchIdNum,
           quizTitle: quiz.quizTitle,
           quizDescription: quiz.quizDescription,
           quizDate,
@@ -744,16 +745,32 @@ app.get('/quizzes/batch/:batchId', verifyToken, async (req, res) => {
     const { batchId } = req.params;
     const { userId, role } = req.user;
 
+    // Convert batchId to number for consistent comparison
+    const batchIdNum = Number(batchId);
+    if (isNaN(batchIdNum)) {
+      return res.status(400).send({
+        error: 'Invalid batch ID',
+        message: 'Batch ID must be a number'
+      });
+    }
+
     const db = client.db('excellentInstitute');
     const quizzes = db.collection('quizzes');
     const quizQuestions = db.collection('quizQuestions');
     const students = db.collection('students');
 
+    // Debug: Log the query parameters
+    console.log('Querying quizzes with batchId:', batchIdNum, 'type:', typeof batchIdNum);
+
+    // Debug: First, let's see what quizzes exist in the database
+    const allQuizzesInDB = await quizzes.find({}).toArray();
+    console.log('All quizzes in database:', JSON.stringify(allQuizzesInDB, null, 2));
+
     // If user is not admin, verify they belong to the batch
     if (role !== 'admin') {
       const student = await students.findOne({
         _id: new ObjectId(userId),
-        batchId: batchId
+        batchId: batchIdNum
       });
 
       if (!student) {
@@ -771,11 +788,14 @@ app.get('/quizzes/batch/:batchId', verifyToken, async (req, res) => {
 
     // Find all quizzes for this batch
     const allQuizzes = await quizzes.find({
-      batchId: batchId
+      batchId: batchIdNum
     }).sort({
       quizDate: 1,
       startTime: 1
     }).toArray();
+
+    // Debug: Log the found quizzes
+    console.log('Found quizzes for batchId', batchIdNum, ':', JSON.stringify(allQuizzes, null, 2));
 
     // Format and categorize quizzes
     const formattedQuizzes = await Promise.all(allQuizzes.map(async (quiz) => {
