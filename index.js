@@ -877,6 +877,292 @@ app.get('/quizzes/batch/:batchId', verifyToken, async (req, res) => {
   }
 });
 
+// Submit Quiz API
+app.post('/quiz/submit', verifyToken, async (req, res) => {
+  try {
+    const { quizId, answers } = req.body;
+    const { userId } = req.user;
+
+    // Validate required fields
+    if (!quizId || !answers) {
+      return res.status(400).send({
+        error: 'Missing required fields',
+        message: 'Quiz ID and answers are required'
+      });
+    }
+
+    // Validate answers is an array
+    if (!Array.isArray(answers)) {
+      return res.status(400).send({
+        error: 'Invalid answers format',
+        message: 'Answers must be provided as an array'
+      });
+    }
+
+    const db = client.db('excellentInstitute');
+    const quizzes = db.collection('quizzes');
+    const quizQuestions = db.collection('quizQuestions');
+    const quizAttempts = db.collection('quizAttempts');
+
+    // Get quiz details
+    const quiz = await quizzes.findOne({ _id: new ObjectId(quizId) });
+    if (!quiz) {
+      return res.status(404).send({
+        error: 'Quiz not found',
+        message: 'No quiz found with the provided ID'
+      });
+    }
+
+    // Check if quiz is still active
+    const now = new Date();
+    const quizDate = new Date(quiz.quizDate);
+    const startDateTime = new Date(`${quiz.quizDate}T${quiz.startTime}`);
+    const endDateTime = new Date(`${quiz.quizDate}T${quiz.endTime}`);
+
+    if (now < startDateTime) {
+      return res.status(400).send({
+        error: 'Quiz not started',
+        message: 'This quiz has not started yet'
+      });
+    }
+
+    if (now > endDateTime) {
+      return res.status(400).send({
+        error: 'Quiz ended',
+        message: 'This quiz has already ended'
+      });
+    }
+
+    // Check if user has already attempted this quiz
+    const existingAttempt = await quizAttempts.findOne({
+      quizId: new ObjectId(quizId),
+      userId: new ObjectId(userId)
+    });
+
+    if (existingAttempt) {
+      return res.status(400).send({
+        error: 'Quiz already attempted',
+        message: 'You have already submitted this quiz'
+      });
+    }
+
+    // Get all questions for this quiz
+    const questions = await quizQuestions.find({
+      quizId: new ObjectId(quizId)
+    }).toArray();
+
+    // Process answers and calculate score
+    let totalScore = 0;
+    const processedAnswers = answers.map(answer => {
+      const question = questions.find(q => q._id.toString() === answer.questionId);
+      if (!question) return null;
+
+      const isCorrect = answer.selectedOption === question.correctOption;
+      const score = isCorrect ? question.marks : 0;
+      totalScore += score;
+
+      return {
+        questionId: question._id,
+        questionNumber: question.questionNumber,
+        selectedOption: answer.selectedOption || null, // null if skipped
+        correctOption: question.correctOption,
+        marks: question.marks,
+        score: score,
+        isCorrect: isCorrect
+      };
+    }).filter(Boolean); // Remove any null entries
+
+    // Calculate percentage
+    const percentage = (totalScore / quiz.totalMarks) * 100;
+    const isPassed = percentage >= quiz.passingMarks;
+
+    // Create attempt record
+    const attempt = {
+      quizId: new ObjectId(quizId),
+      userId: new ObjectId(userId),
+      batchId: quiz.batchId,
+      answers: processedAnswers,
+      totalScore,
+      totalMarks: quiz.totalMarks,
+      percentage,
+      isPassed,
+      submittedAt: new Date(),
+      status: 'completed'
+    };
+
+    // Save attempt
+    await quizAttempts.insertOne(attempt);
+
+    res.status(200).send({
+      message: 'Quiz submitted successfully',
+      result: {
+        quizId: quizId,
+        totalScore,
+        totalMarks: quiz.totalMarks,
+        percentage: percentage.toFixed(2),
+        isPassed,
+        submittedAt: attempt.submittedAt
+      }
+    });
+
+  } catch (err) {
+    console.error('Submit quiz error:', err);
+    res.status(500).send({
+      error: 'Failed to submit quiz',
+      message: 'An error occurred while submitting the quiz',
+      details: err.message
+    });
+  }
+});
+
+// Get Quiz Status API
+app.get('/quiz/status/:quizId', verifyToken, async (req, res) => {
+  try {
+    const { quizId } = req.params;
+    const { userId } = req.user;
+
+    const db = client.db('excellentInstitute');
+    const quizzes = db.collection('quizzes');
+    const quizAttempts = db.collection('quizAttempts');
+
+    // Get quiz details
+    const quiz = await quizzes.findOne({ _id: new ObjectId(quizId) });
+    if (!quiz) {
+      return res.status(404).send({
+        error: 'Quiz not found',
+        message: 'No quiz found with the provided ID'
+      });
+    }
+
+    // Check if user has attempted this quiz
+    const attempt = await quizAttempts.findOne({
+      quizId: new ObjectId(quizId),
+      userId: new ObjectId(userId)
+    });
+
+    // Get current time for status
+    const now = new Date();
+    const startDateTime = new Date(`${quiz.quizDate}T${quiz.startTime}`);
+    const endDateTime = new Date(`${quiz.quizDate}T${quiz.endTime}`);
+
+    let status = 'not_started';
+    if (now >= startDateTime && now <= endDateTime) {
+      status = 'active';
+    } else if (now > endDateTime) {
+      status = 'ended';
+    }
+
+    res.status(200).send({
+      quizId: quizId,
+      quizTitle: quiz.quizTitle,
+      status: status,
+      attemptStatus: attempt ? 'completed' : 'not_attempted',
+      attemptDetails: attempt ? {
+        submittedAt: attempt.submittedAt,
+        totalScore: attempt.totalScore,
+        totalMarks: attempt.totalMarks,
+        percentage: attempt.percentage,
+        isPassed: attempt.isPassed
+      } : null
+    });
+
+  } catch (err) {
+    console.error('Get quiz status error:', err);
+    res.status(500).send({
+      error: 'Failed to get quiz status',
+      message: 'An error occurred while getting quiz status',
+      details: err.message
+    });
+  }
+});
+
+// Get User's Quiz Attempts API
+app.get('/quiz/attempts', verifyToken, async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { batchId } = req.query;
+
+    const db = client.db('excellentInstitute');
+    const quizzes = db.collection('quizzes');
+    const quizAttempts = db.collection('quizAttempts');
+
+    // Build query based on batchId
+    let query = { userId: new ObjectId(userId) };
+    if (batchId) {
+      query.batchId = Number(batchId);
+    }
+
+    // Get all attempts
+    const attempts = await quizAttempts.find(query)
+      .sort({ submittedAt: -1 })
+      .toArray();
+
+    // Get all quizzes for this batch
+    const batchQuizzes = await quizzes.find(
+      batchId ? { batchId: Number(batchId) } : {}
+    ).toArray();
+
+    // Create a map of attempted quizzes
+    const attemptedQuizIds = new Set(attempts.map(a => a.quizId.toString()));
+
+    // Categorize quizzes
+    const categorizedQuizzes = {
+      attempted: [],
+      notAttempted: []
+    };
+
+    batchQuizzes.forEach(quiz => {
+      const attempt = attempts.find(a => a.quizId.toString() === quiz._id.toString());
+      const quizData = {
+        quizId: quiz._id.toString(),
+        quizTitle: quiz.quizTitle,
+        quizDate: quiz.quizDate,
+        startTime: quiz.startTime,
+        endTime: quiz.endTime,
+        totalMarks: quiz.totalMarks,
+        passingMarks: quiz.passingMarks
+      };
+
+      if (attempt) {
+        categorizedQuizzes.attempted.push({
+          ...quizData,
+          attemptDetails: {
+            submittedAt: attempt.submittedAt,
+            totalScore: attempt.totalScore,
+            percentage: attempt.percentage,
+            isPassed: attempt.isPassed
+          }
+        });
+      } else {
+        // Check if quiz is still available for attempt
+        const now = new Date();
+        const endDateTime = new Date(`${quiz.quizDate}T${quiz.endTime}`);
+        const isAvailable = now <= endDateTime;
+
+        categorizedQuizzes.notAttempted.push({
+          ...quizData,
+          isAvailable
+        });
+      }
+    });
+
+    res.status(200).send({
+      message: 'Quiz attempts retrieved successfully',
+      totalAttempts: attempts.length,
+      totalQuizzes: batchQuizzes.length,
+      quizzes: categorizedQuizzes
+    });
+
+  } catch (err) {
+    console.error('Get quiz attempts error:', err);
+    res.status(500).send({
+      error: 'Failed to get quiz attempts',
+      message: 'An error occurred while retrieving quiz attempts',
+      details: err.message
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
