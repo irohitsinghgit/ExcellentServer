@@ -67,72 +67,58 @@ app.post('/register', async (req, res) => {
         password,
         batchId,
         role,
-        phoneNumber,
-        dateOfBirth,
-        gender,
         address,
-        emergencyContact,
-        education,
-        enrolled,
-        securityCode,
-        registrationDate = new Date(),
-        status = 'active'
+        securityCode
       } = req.body;
 
-      // Required fields validation with proper nesting
+      // Required fields validation
       const requiredFields = {
-        basic: ['name', 'email', 'password', 'role', 'phoneNumber', 'dateOfBirth', 'gender', 'securityCode'],
-        address: ['street', 'city', 'state', 'zipCode', 'country'],
-        emergencyContact: ['name', 'relationship', 'phoneNumber'],
-        education: ['lastInstitution', 'qualification']
+        name: 'Name',
+        email: 'Email',
+        password: 'Password',
+        batchId: 'Batch ID',
+        role: 'Role',
+        address: 'Address',
+        securityCode: 'Security Code'
       };
 
       const missingFields = [];
-
-      // Check basic fields
-      requiredFields.basic.forEach(field => {
+      for (const [field, label] of Object.entries(requiredFields)) {
         if (!req.body[field]) {
-          missingFields.push(field);
+          missingFields.push(label);
         }
-      });
-
-      // Check address fields
-      if (!address) {
-        missingFields.push('address');
-      } else {
-        requiredFields.address.forEach(field => {
-          if (!address[field]) {
-            missingFields.push(`address.${field}`);
-          }
-        });
-      }
-
-      // Check emergency contact fields
-      if (!emergencyContact) {
-        missingFields.push('emergencyContact');
-      } else {
-        requiredFields.emergencyContact.forEach(field => {
-          if (!emergencyContact[field]) {
-            missingFields.push(`emergencyContact.${field}`);
-          }
-        });
-      }
-
-      // Check education fields
-      if (!education) {
-        missingFields.push('education');
-      } else {
-        requiredFields.education.forEach(field => {
-          if (!education[field]) {
-            missingFields.push(`education.${field}`);
-          }
-        });
       }
 
       if (missingFields.length > 0) {
         return res.status(400).send({ 
           error: 'Missing required fields', 
           missingFields 
+        });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).send({
+          error: 'Invalid email format',
+          message: 'Please provide a valid email address'
+        });
+      }
+
+      // Validate password
+      if (password.length < 6) {
+        return res.status(400).send({
+          error: 'Invalid password',
+          message: 'Password must be at least 6 characters long'
+        });
+      }
+
+      // Validate batchId is a number
+      const batchIdNum = Number(batchId);
+      if (isNaN(batchIdNum) || !Number.isInteger(batchIdNum) || batchIdNum <= 0) {
+        return res.status(400).send({
+          error: 'Invalid batch ID',
+          message: 'Batch ID must be a positive number (e.g., 1, 2, 3)'
         });
       }
 
@@ -144,28 +130,42 @@ app.post('/register', async (req, res) => {
         });
       }
 
+      // Validate role
+      const validRoles = ['student', 'admin'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).send({
+          error: 'Invalid role',
+          message: 'Role must be either "student" or "admin"'
+        });
+      }
+
       // Check if email already exists
       const existingUser = await students.findOne({ email });
       if (existingUser) {
-        return res.status(400).send({ error: 'Email already registered' });
+        return res.status(400).send({ 
+          error: 'Email already registered',
+          message: 'This email is already in use'
+        });
+      }
+
+      // Check if security code already exists
+      const existingSecurityCode = await students.findOne({ securityCode });
+      if (existingSecurityCode) {
+        return res.status(400).send({
+          error: 'Security code already exists',
+          message: 'This security code is already in use'
+        });
       }
   
       const newStudent = {
-        name,
-        email,
-        password,
-        batchId,
+        name: name.trim(),
+        email: email.trim(),
+        password: password.trim(),
+        batchId: batchIdNum,
         role,
-        phoneNumber,
-        dateOfBirth,
-        gender,
-        address,
-        emergencyContact,
-        education,
-        enrolled: enrolled || false,
+        address: address.trim(), // Store as simple string
         securityCode,
-        registrationDate,
-        status,
+        status: 'active',
         createdAt: new Date(),
         updatedAt: new Date()
       };
@@ -175,17 +175,21 @@ app.post('/register', async (req, res) => {
       res.status(201).send({ 
         message: 'Registered successfully', 
         id: result.insertedId,
-        student: {
-          name,
-          email,
-          role,
-          batchId,
-          status
+        user: {
+          name: newStudent.name,
+          email: newStudent.email,
+          role: newStudent.role,
+          batchId: newStudent.batchId,
+          status: newStudent.status
         }
       });
     } catch (err) {
       console.error(err);
-      res.status(500).send({ error: 'Error adding student', details: err.message });
+      res.status(500).send({ 
+        error: 'Error adding user', 
+        message: 'An error occurred during registration',
+        details: err.message 
+      });
     }
   });
 
@@ -452,40 +456,45 @@ app.post('/check-security-code', async (req, res) => {
   }
 });
 
-// Create Quiz Question endpoint (Admin only)
+// Create Quiz endpoint (Admin only)
 app.post('/admin/create-quiz', verifyToken, async (req, res) => {
   try {
     // Check if user is admin
     if (req.user.role !== 'admin') {
       return res.status(403).send({
         error: 'Access denied',
-        message: 'Only admins can create quiz questions'
+        message: 'Only admins can create quizzes'
       });
     }
 
-    const {
-      question,
-      options,
-      correctOption,
+    const { 
+      batchId,
+      quizTitle,
+      quizDescription,
       quizDate,
       startTime,
       endTime,
-      marks = 1, // Default marks per question
-      category,
-      difficulty = 'medium', // Default difficulty
-      status = 'draft', // Default status
-      courseId // Course ID (1, 2, 3, or 4)
+      questions,
+      totalMarks = 100,
+      passingMarks = 40
     } = req.body;
+
+    // Validate batchId
+    if (!batchId) {
+      return res.status(400).send({
+        error: 'Missing batch ID',
+        message: 'Batch ID is required'
+      });
+    }
 
     // Validate required fields
     const requiredFields = {
-      question: 'Question text',
-      options: 'Question options',
-      correctOption: 'Correct option',
-      quizDate: 'Quiz date',
-      startTime: 'Start time',
-      endTime: 'End time',
-      courseId: 'Course ID'
+      quizTitle: 'Quiz Title',
+      quizDescription: 'Quiz Description',
+      quizDate: 'Quiz Date',
+      startTime: 'Start Time',
+      endTime: 'End Time',
+      questions: 'Questions'
     };
 
     const missingFields = [];
@@ -498,36 +507,28 @@ app.post('/admin/create-quiz', verifyToken, async (req, res) => {
     if (missingFields.length > 0) {
       return res.status(400).send({
         error: 'Missing required fields',
+        message: 'The following fields are required',
         missingFields
       });
     }
 
-    // Validate course ID
-    const validCourseIds = [1, 2, 3, 4];
-    if (!validCourseIds.includes(Number(courseId))) {
+    // Validate questions array
+    if (!Array.isArray(questions)) {
       return res.status(400).send({
-        error: 'Invalid course ID',
-        message: 'Course ID must be one of: 1, 2, 3, 4'
+        error: 'Invalid questions format',
+        message: 'Questions must be provided as an array'
       });
     }
 
-    // Validate options
-    if (!Array.isArray(options) || options.length !== 4) {
+    // Validate number of questions
+    if (questions.length < 1 || questions.length > 100) {
       return res.status(400).send({
-        error: 'Invalid options',
-        message: 'Exactly 4 options (A, B, C, D) are required'
+        error: 'Invalid number of questions',
+        message: 'Quiz must contain between 1 and 100 questions'
       });
     }
 
-    // Validate correct option
-    if (!['A', 'B', 'C', 'D'].includes(correctOption)) {
-      return res.status(400).send({
-        error: 'Invalid correct option',
-        message: 'Correct option must be one of: A, B, C, D'
-      });
-    }
-
-    // Validate date and time format
+    // Validate date and time formats
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
 
@@ -570,95 +571,217 @@ app.post('/admin/create-quiz', verifyToken, async (req, res) => {
     }
 
     const db = client.db('excellentInstitute');
+    const quizzes = db.collection('quizzes');
     const quizQuestions = db.collection('quizQuestions');
 
-    // Create the quiz question document
-    const newQuizQuestion = {
-      question,
-      options: {
-        A: options[0],
-        B: options[1],
-        C: options[2],
-        D: options[3]
-      },
-      correctOption,
+    // Generate a single quiz ID for all questions
+    const quizId = new ObjectId();
+
+    // Validate each question
+    const validatedQuestions = [];
+    const errors = [];
+
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      const questionNumber = i + 1;
+
+      // Required fields validation for each question
+      const questionRequiredFields = {
+        question: 'Question text',
+        options: 'Question options',
+        correctOption: 'Correct option',
+        marks: 'Question marks'
+      };
+
+      const questionMissingFields = [];
+      for (const [field, label] of Object.entries(questionRequiredFields)) {
+        if (!q[field]) {
+          questionMissingFields.push(`${label} (Question ${questionNumber})`);
+        }
+      }
+
+      if (questionMissingFields.length > 0) {
+        errors.push({
+          questionNumber,
+          error: 'Missing required fields',
+          missingFields: questionMissingFields
+        });
+        continue;
+      }
+
+      // Validate options
+      if (!Array.isArray(q.options) || q.options.length !== 4) {
+        errors.push({
+          questionNumber,
+          error: 'Invalid options',
+          message: 'Exactly 4 options (A, B, C, D) are required'
+        });
+        continue;
+      }
+
+      // Validate correct option
+      if (!['A', 'B', 'C', 'D'].includes(q.correctOption)) {
+        errors.push({
+          questionNumber,
+          error: 'Invalid correct option',
+          message: 'Correct option must be one of: A, B, C, D'
+        });
+        continue;
+      }
+
+      // Validate marks
+      const marks = Number(q.marks);
+      if (isNaN(marks) || marks <= 0) {
+        errors.push({
+          questionNumber,
+          error: 'Invalid marks',
+          message: 'Marks must be a positive number'
+        });
+        continue;
+      }
+
+      // If all validations pass, add to validated questions
+      validatedQuestions.push({
+        quizId: quizId,
+        question: q.question.trim(),
+        options: {
+          A: q.options[0].trim(),
+          B: q.options[1].trim(),
+          C: q.options[2].trim(),
+          D: q.options[3].trim()
+        },
+        correctOption: q.correctOption,
+        marks: marks,
+        questionNumber: questionNumber,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+    }
+
+    // If there are any validation errors, return them
+    if (errors.length > 0) {
+      return res.status(400).send({
+        error: 'Validation failed',
+        message: 'Some questions failed validation',
+        errors,
+        validatedCount: validatedQuestions.length,
+        totalQuestions: questions.length
+      });
+    }
+
+    // Calculate total marks from questions
+    const calculatedTotalMarks = validatedQuestions.reduce((sum, q) => sum + q.marks, 0);
+
+    // Create the quiz document
+    const quiz = {
+      _id: quizId,
+      batchId,
+      quizTitle: quizTitle.trim(),
+      quizDescription: quizDescription.trim(),
       quizDate,
       startTime,
       endTime,
-      marks,
-      category,
-      difficulty,
-      status,
-      courseId: Number(courseId), // Store as number (1, 2, 3, or 4)
+      totalMarks: calculatedTotalMarks,
+      passingMarks: Number(passingMarks),
+      totalQuestions: validatedQuestions.length,
+      status: 'scheduled',
       createdBy: req.user.userId,
       createdAt: new Date(),
       updatedAt: new Date()
     };
 
-    const result = await quizQuestions.insertOne(newQuizQuestion);
+    // Start a session for transaction
+    const session = client.startSession();
 
-    res.status(201).send({
-      message: 'Quiz question created successfully',
-      quizId: result.insertedId,
-      quiz: {
-        question,
-        options: newQuizQuestion.options,
-        quizDate,
-        startTime,
-        endTime,
-        category,
-        difficulty,
-        status,
-        courseId: Number(courseId)
-      }
-    });
+    try {
+      await session.withTransaction(async () => {
+        // Insert the quiz document
+        await quizzes.insertOne(quiz, { session });
+
+        // Insert all questions
+        await quizQuestions.insertMany(validatedQuestions, { session });
+      });
+
+      res.status(201).send({
+        message: 'Quiz created successfully',
+        quiz: {
+          id: quizId.toString(),
+          batchId,
+          quizTitle: quiz.quizTitle,
+          quizDescription: quiz.quizDescription,
+          quizDate,
+          startTime,
+          endTime,
+          totalMarks: calculatedTotalMarks,
+          passingMarks: quiz.passingMarks,
+          totalQuestions: validatedQuestions.length,
+          status: quiz.status,
+          createdBy: req.user.userId,
+          createdAt: quiz.createdAt
+        }
+      });
+
+    } catch (transactionError) {
+      console.error('Transaction error:', transactionError);
+      throw transactionError;
+    } finally {
+      await session.endSession();
+    }
 
   } catch (err) {
-    console.error('Create quiz question error:', err);
+    console.error('Create quiz error:', err);
     res.status(500).send({
-      error: 'Failed to create quiz question',
-      message: 'An error occurred while creating the quiz question'
+      error: 'Failed to create quiz',
+      message: 'An error occurred while creating the quiz',
+      details: err.message
     });
   }
 });
 
-// Get questions for a specific course
-app.get('/quiz/questions/:courseId', verifyToken, async (req, res) => {
+// Get quizzes by batch ID
+app.get('/quizzes/batch/:batchId', verifyToken, async (req, res) => {
   try {
-    const { courseId } = req.params;
-    const courseIdNum = Number(courseId);
-
-    // Validate course ID
-    const validCourseIds = [1, 2, 3, 4];
-    if (!validCourseIds.includes(courseIdNum)) {
-      return res.status(400).send({
-        error: 'Invalid course ID',
-        message: 'Course ID must be one of: 1, 2, 3, 4'
-      });
-    }
+    const { batchId } = req.params;
+    const { userId, role } = req.user;
 
     const db = client.db('excellentInstitute');
+    const quizzes = db.collection('quizzes');
     const quizQuestions = db.collection('quizQuestions');
+    const students = db.collection('students');
+
+    // If user is not admin, verify they belong to the batch
+    if (role !== 'admin') {
+      const student = await students.findOne({
+        _id: new ObjectId(userId),
+        batchId: batchId
+      });
+
+      if (!student) {
+        return res.status(403).send({
+          error: 'Access denied',
+          message: 'You do not have access to this batch\'s quizzes'
+        });
+      }
+    }
 
     // Get current date and time
     const now = new Date();
     const currentDate = now.toISOString().split('T')[0];
     const currentTime = now.toTimeString().slice(0, 5);
 
-    // Find all published questions for the course
-    const questions = await quizQuestions.find({
-      courseId: courseIdNum,
-      status: 'published' // Changed from 'active' to 'published'
+    // Find all quizzes for this batch
+    const allQuizzes = await quizzes.find({
+      batchId: batchId
     }).sort({
-      quizDate: 1,  // Sort by date
-      startTime: 1  // Then by start time
+      quizDate: 1,
+      startTime: 1
     }).toArray();
 
-    // Format and categorize questions
-    const formattedQuestions = questions.map(q => {
-      const questionDate = new Date(q.quizDate);
-      const startDateTime = new Date(`${q.quizDate}T${q.startTime}`);
-      const endDateTime = new Date(`${q.quizDate}T${q.endTime}`);
+    // Format and categorize quizzes
+    const formattedQuizzes = await Promise.all(allQuizzes.map(async (quiz) => {
+      const quizDate = new Date(quiz.quizDate);
+      const startDateTime = new Date(`${quiz.quizDate}T${quiz.startTime}`);
+      const endDateTime = new Date(`${quiz.quizDate}T${quiz.endTime}`);
       
       let status = 'upcoming';
       if (now >= startDateTime && now <= endDateTime) {
@@ -667,116 +790,69 @@ app.get('/quiz/questions/:courseId', verifyToken, async (req, res) => {
         status = 'completed';
       }
 
-      return {
-        quizId: q._id,
+      // Get questions for this quiz
+      const questions = await quizQuestions.find({
+        quizId: quiz._id
+      }).sort({
+        questionNumber: 1
+      }).toArray();
+
+      // Format questions (remove correct answers if quiz is upcoming)
+      const formattedQuestions = questions.map(q => ({
+        questionId: q._id.toString(),
+        questionNumber: q.questionNumber,
         question: q.question,
         options: q.options,
-        quizDate: q.quizDate,
-        startTime: q.startTime,
-        endTime: q.endTime,
         marks: q.marks,
-        category: q.category,
-        difficulty: q.difficulty,
-        courseId: q.courseId,
+        // Only include correct option if quiz is completed or user is admin
+        ...(status === 'completed' || role === 'admin' ? { correctOption: q.correctOption } : {})
+      }));
+
+      return {
+        quizId: quiz._id.toString(),
+        batchId: quiz.batchId,
+        quizTitle: quiz.quizTitle,
+        quizDescription: quiz.quizDescription,
+        quizDate: quiz.quizDate,
+        startTime: quiz.startTime,
+        endTime: quiz.endTime,
+        totalMarks: quiz.totalMarks,
+        passingMarks: quiz.passingMarks,
+        totalQuestions: quiz.totalQuestions,
         status: status,
         timeRemaining: status === 'upcoming' ? 
           Math.floor((startDateTime - now) / 1000 / 60) : // minutes until start
           status === 'active' ? 
           Math.floor((endDateTime - now) / 1000 / 60) : // minutes until end
-          null
+          null,
+        questions: formattedQuestions,
+        createdBy: quiz.createdBy,
+        createdAt: quiz.createdAt
       };
-    });
+    }));
 
-    // Group questions by status
-    const groupedQuestions = {
-      active: formattedQuestions.filter(q => q.status === 'active'),
-      upcoming: formattedQuestions.filter(q => q.status === 'upcoming'),
-      completed: formattedQuestions.filter(q => q.status === 'completed')
+    // Group quizzes by status
+    const groupedQuizzes = {
+      active: formattedQuizzes.filter(q => q.status === 'active'),
+      upcoming: formattedQuizzes.filter(q => q.status === 'upcoming'),
+      completed: formattedQuizzes.filter(q => q.status === 'completed')
     };
 
     res.status(200).send({
-      message: 'Questions retrieved successfully',
-      courseId: courseIdNum,
-      totalQuestions: questions.length,
+      message: 'Quizzes retrieved successfully',
+      batchId: batchId,
+      totalQuizzes: allQuizzes.length,
       currentDate: currentDate,
       currentTime: currentTime,
-      questions: groupedQuestions
+      quizzes: groupedQuizzes
     });
 
   } catch (err) {
-    console.error('Get questions error:', err);
+    console.error('Get quizzes error:', err);
     res.status(500).send({
-      error: 'Failed to get questions',
-      message: 'An error occurred while retrieving questions'
-    });
-  }
-});
-
-// Debug endpoint to check quiz questions (temporary)
-app.get('/debug/quiz-questions/:courseId', verifyToken, async (req, res) => {
-  try {
-    const { courseId } = req.params;
-    const courseIdNum = Number(courseId);
-    const db = client.db('excellentInstitute');
-    const quizQuestions = db.collection('quizQuestions');
-
-    // Get today's date
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    const currentTime = today.toTimeString().slice(0, 5);
-
-    // Get all questions for this course without any filters first
-    const allQuestions = await quizQuestions.find({
-      courseId: courseIdNum
-    }).toArray();
-
-    // Get questions with today's date filter
-    const todayQuestions = await quizQuestions.find({
-      courseId: courseIdNum,
-      quizDate: todayStr
-    }).toArray();
-
-    // Get questions with status filter
-    const activeQuestions = await quizQuestions.find({
-      courseId: courseIdNum,
-      quizDate: todayStr,
-      status: 'active'
-    }).toArray();
-
-    // Get the final filtered questions
-    const finalQuestions = await quizQuestions.find({
-      courseId: courseIdNum,
-      quizDate: todayStr,
-      status: 'active',
-      $or: [
-        {
-          startTime: { $lte: currentTime },
-          endTime: { $gt: currentTime }
-        },
-        {
-          startTime: { $gt: currentTime }
-        }
-      ]
-    }).toArray();
-
-    res.status(200).send({
-      debug: {
-        currentDate: todayStr,
-        currentTime: currentTime,
-        courseId: courseIdNum,
-        totalQuestionsInCollection: allQuestions.length,
-        questionsWithTodayDate: todayQuestions.length,
-        questionsWithActiveStatus: activeQuestions.length,
-        finalFilteredQuestions: finalQuestions.length,
-        sampleQuestions: allQuestions.slice(0, 2) // Show first 2 questions for debugging
-      }
-    });
-
-  } catch (err) {
-    console.error('Debug error:', err);
-    res.status(500).send({
-      error: 'Debug failed',
-      message: err.message
+      error: 'Failed to get quizzes',
+      message: 'An error occurred while retrieving quizzes',
+      details: err.message
     });
   }
 });
